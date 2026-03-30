@@ -17,9 +17,20 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Notes App',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF6750A4),
+          brightness: Brightness.light,
+        ),
       ),
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF6750A4),
+          brightness: Brightness.dark,
+        ),
+      ),
+      themeMode: ThemeMode.system,
       home: const HomePage(),
     );
   }
@@ -34,6 +45,201 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   late final Box box;
+  final searchController = TextEditingController();
+  List<int> filteredIndices = [];
+
+  @override
+  void initState() {
+    super.initState();
+    box = Hive.box('notes');
+    _updateFilteredNotes();
+  }
+
+  void _updateFilteredNotes() {
+    final query = searchController.text.toLowerCase();
+    if (query.isEmpty) {
+      filteredIndices = List.generate(box.length, (i) => i);
+    } else {
+      filteredIndices = [];
+      for (int i = 0; i < box.length; i++) {
+        if (box.getAt(i).toString().toLowerCase().contains(query)) {
+          filteredIndices.add(i);
+        }
+      }
+    }
+    setState(() {});
+  }
+
+  void _deleteNoteWithConfirmation(int index) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Delete Note'),
+          content: const Text('Are you sure you want to delete this note?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Discard'),
+            ),
+            TextButton(
+              onPressed: () {
+                box.deleteAt(index);
+                searchController.clear();
+                _updateFilteredNotes();
+                Navigator.pop(context);
+              },
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Notes'),
+        centerTitle: true,
+        elevation: 0,
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: TextField(
+              controller: searchController,
+              onChanged: (_) => _updateFilteredNotes(),
+              decoration: InputDecoration(
+                hintText: 'Search notes',
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: filteredIndices.isEmpty
+                ? Center(
+                    child: Text(
+                      searchController.text.isEmpty
+                          ? 'No notes yet. Create one!'
+                          : 'No notes found',
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: filteredIndices.length,
+                    itemBuilder: (context, listIndex) {
+                      final actualIndex = filteredIndices[listIndex];
+                      final note = box.getAt(actualIndex).toString();
+                      final preview = note.length > 100
+                          ? '${note.substring(0, 100)}...'
+                          : note;
+
+                      return Card(
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        child: ListTile(
+                          title: Text(preview),
+                          trailing: SizedBox(
+                            width: 100,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit),
+                                  onPressed: () async {
+                                    final result = await Navigator.push<String>(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) {
+                                          return EditNotePage(
+                                            note: note,
+                                            index: actualIndex,
+                                          );
+                                        },
+                                      ),
+                                    );
+                                    if (result != null) {
+                                      searchController.clear();
+                                      _updateFilteredNotes();
+                                    }
+                                  },
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete),
+                                  onPressed: () {
+                                    _deleteNoteWithConfirmation(actualIndex);
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                          onTap: () async {
+                            final result = await Navigator.push<String>(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) {
+                                  return EditNotePage(
+                                    note: note,
+                                    index: actualIndex,
+                                  );
+                                },
+                              ),
+                            );
+                            if (result != null) {
+                              searchController.clear();
+                              _updateFilteredNotes();
+                            }
+                          },
+                        ),
+                      );
+                    },
+                  ),
+          )
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () async {
+          final result = await Navigator.push<String>(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const AddNotePage(),
+            ),
+          );
+          if (result != null) {
+            searchController.clear();
+            _updateFilteredNotes();
+          }
+        },
+        icon: const Icon(Icons.add),
+        label: const Text('New Note'),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+}
+
+class AddNotePage extends StatefulWidget {
+  const AddNotePage({super.key});
+
+  @override
+  State<AddNotePage> createState() => _AddNotePageState();
+}
+
+class _AddNotePageState extends State<AddNotePage> {
+  late final Box box;
   final controller = TextEditingController();
 
   @override
@@ -42,66 +248,223 @@ class _HomePageState extends State<HomePage> {
     box = Hive.box('notes');
   }
 
-  void addNote() {
-    if (controller.text.trim().isEmpty) return;
-
+  void _saveNote() {
+    if (controller.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a note')),
+      );
+      return;
+    }
     box.add(controller.text);
-    controller.clear();
-    setState(() {});
+    Navigator.pop(context, controller.text);
   }
 
-  void deleteNote(int index) {
-    box.deleteAt(index);
-    setState(() {});
+  void _showDiscardConfirmation() {
+    if (controller.text.trim().isEmpty) {
+      Navigator.pop(context);
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Discard Changes'),
+          content: const Text('Are you sure you want to discard this note?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Keep'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.pop(context);
+              },
+              child: const Text('Discard'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Notes App'),
-        centerTitle: true,
+        title: const Text('New Note'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: _showDiscardConfirmation,
+        ),
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: TextField(
-              controller: controller,
-              decoration: InputDecoration(
-                hintText: 'Enter a note',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: controller,
+                maxLines: null,
+                expands: true,
+                textAlignVertical: TextAlignVertical.top,
+                decoration: InputDecoration(
+                  hintText: 'Start typing your note...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: ElevatedButton(
-              onPressed: addNote,
-              child: const Text('Add Note'),
-            ),
-          ),
-          Expanded(
-            child: box.isEmpty
-                ? const Center(
-                    child: Text('No notes yet. Add one!'),
-                  )
-                : ListView.builder(
-                    itemCount: box.length,
-                    itemBuilder: (context, index) {
-                      return ListTile(
-                        title: Text(box.getAt(index)),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete),
-                          onPressed: () => deleteNote(index),
-                        ),
-                      );
-                    },
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _showDiscardConfirmation,
+                    child: const Text('Cancel'),
                   ),
-          )
-        ],
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _saveNote,
+                    child: const Text('Save'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+}
+
+class EditNotePage extends StatefulWidget {
+  final String note;
+  final int index;
+
+  const EditNotePage({
+    super.key,
+    required this.note,
+    required this.index,
+  });
+
+  @override
+  State<EditNotePage> createState() => _EditNotePageState();
+}
+
+class _EditNotePageState extends State<EditNotePage> {
+  late final Box box;
+  late final TextEditingController controller;
+  late String originalNote;
+
+  @override
+  void initState() {
+    super.initState();
+    box = Hive.box('notes');
+    originalNote = widget.note;
+    controller = TextEditingController(text: widget.note);
+  }
+
+  void _saveNote() {
+    if (controller.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a note')),
+      );
+      return;
+    }
+    box.putAt(widget.index, controller.text);
+    Navigator.pop(context, controller.text);
+  }
+
+  void _showDiscardConfirmation() {
+    if (controller.text == originalNote) {
+      Navigator.pop(context);
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Discard Changes'),
+          content:
+              const Text('Are you sure you want to discard your changes?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Keep'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.pop(context);
+              },
+              child: const Text('Discard'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Edit Note'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: _showDiscardConfirmation,
+        ),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: controller,
+                maxLines: null,
+                expands: true,
+                textAlignVertical: TextAlignVertical.top,
+                decoration: InputDecoration(
+                  hintText: 'Edit your note...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _showDiscardConfirmation,
+                    child: const Text('Cancel'),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _saveNote,
+                    child: const Text('Save'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
