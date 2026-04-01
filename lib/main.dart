@@ -31,6 +31,7 @@ class MyApp extends StatelessWidget {
         ),
       ),
       themeMode: ThemeMode.system,
+      debugShowCheckedModeBanner: false,
       home: const HomePage(),
     );
   }
