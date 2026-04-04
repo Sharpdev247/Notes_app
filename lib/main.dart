@@ -3,8 +3,16 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Hive.initFlutter();
-  await Hive.openBox('notes');
+  try {
+    await Hive.initFlutter();
+    await Hive.openBox('notes');
+  } catch (e) {
+    debugPrint('Error initializing Hive: $e');
+  }
+
+  FlutterError.onError = (FlutterErrorDetails details) {
+    debugPrint('Flutter Error: ${details.exceptionAsString()}');
+  };
 
   runApp(const MyApp());
 }
@@ -52,23 +60,34 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    box = Hive.box('notes');
-    _updateFilteredNotes();
+    try {
+      box = Hive.box('notes');
+      _updateFilteredNotes();
+    } catch (e) {
+      debugPrint('Error initializing HomePage: $e');
+    }
   }
 
   void _updateFilteredNotes() {
-    final query = searchController.text.toLowerCase();
-    if (query.isEmpty) {
-      filteredIndices = List.generate(box.length, (i) => i);
-    } else {
-      filteredIndices = [];
-      for (int i = 0; i < box.length; i++) {
-        if (box.getAt(i).toString().toLowerCase().contains(query)) {
-          filteredIndices.add(i);
+    try {
+      final query = searchController.text.toLowerCase();
+      if (query.isEmpty) {
+        filteredIndices = List.generate(box.length, (i) => i);
+      } else {
+        filteredIndices = [];
+        for (int i = 0; i < box.length; i++) {
+          final note = box.getAt(i);
+          if (note != null && note.toString().toLowerCase().contains(query)) {
+            filteredIndices.add(i);
+          }
         }
       }
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('Error updating filtered notes: $e');
     }
-    setState(() {});
   }
 
   void _deleteNoteWithConfirmation(int index) {
@@ -85,10 +104,24 @@ class _HomePageState extends State<HomePage> {
             ),
             TextButton(
               onPressed: () {
-                box.deleteAt(index);
-                searchController.clear();
-                _updateFilteredNotes();
-                Navigator.pop(context);
+                try {
+                  if (index >= 0 && index < box.length) {
+                    box.deleteAt(index);
+                  }
+                  if (mounted) {
+                    searchController.clear();
+                    _updateFilteredNotes();
+                    Navigator.pop(context);
+                  }
+                } catch (e) {
+                  debugPrint('Error deleting note: $e');
+                  Navigator.pop(context);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Error deleting note')),
+                    );
+                  }
+                }
               },
               child: const Text('Delete'),
             ),
@@ -135,72 +168,84 @@ class _HomePageState extends State<HomePage> {
                 : ListView.builder(
                     itemCount: filteredIndices.length,
                     itemBuilder: (context, listIndex) {
-                      final actualIndex = filteredIndices[listIndex];
-                      final note = box.getAt(actualIndex).toString();
-                      final preview = note.length > 100
-                          ? '${note.substring(0, 100)}...'
-                          : note;
+                      try {
+                        final actualIndex = filteredIndices[listIndex];
+                        if (actualIndex < 0 || actualIndex >= box.length) {
+                          return const SizedBox.shrink();
+                        }
+                        final noteData = box.getAt(actualIndex);
+                        if (noteData == null) {
+                          return const SizedBox.shrink();
+                        }
+                        final note = noteData.toString();
+                        final preview = note.length > 100
+                            ? '${note.substring(0, 100)}...'
+                            : note;
 
-                      return Card(
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        child: ListTile(
-                          title: Text(preview),
-                          trailing: SizedBox(
-                            width: 100,
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit),
-                                  onPressed: () async {
-                                    final result = await Navigator.push<String>(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) {
-                                          return EditNotePage(
-                                            note: note,
-                                            index: actualIndex,
-                                          );
-                                        },
-                                      ),
-                                    );
-                                    if (result != null) {
-                                      searchController.clear();
-                                      _updateFilteredNotes();
-                                    }
-                                  },
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete),
-                                  onPressed: () {
-                                    _deleteNoteWithConfirmation(actualIndex);
-                                  },
-                                ),
-                              ],
-                            ),
+                        return Card(
+                          margin: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
                           ),
-                          onTap: () async {
-                            final result = await Navigator.push<String>(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) {
-                                  return EditNotePage(
-                                    note: note,
-                                    index: actualIndex,
-                                  );
-                                },
+                          child: ListTile(
+                            title: Text(preview),
+                            trailing: SizedBox(
+                              width: 100,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit),
+                                    onPressed: () async {
+                                      final result = await Navigator.push<String>(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) {
+                                            return EditNotePage(
+                                              note: note,
+                                              index: actualIndex,
+                                            );
+                                          },
+                                        ),
+                                      );
+                                      if (result != null && mounted) {
+                                        searchController.clear();
+                                        _updateFilteredNotes();
+                                      }
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete),
+                                    onPressed: () {
+                                      _deleteNoteWithConfirmation(actualIndex);
+                                    },
+                                  ),
+                                ],
                               ),
-                            );
-                            if (result != null) {
-                              searchController.clear();
-                              _updateFilteredNotes();
-                            }
-                          },
-                        ),
-                      );
+                            ),
+                            onTap: () async {
+                              final result = await Navigator.push<String>(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) {
+                                    return EditNotePage(
+                                      note: note,
+                                      index: actualIndex,
+                                    );
+                                  },
+                                ),
+                              );
+                              if (result != null && mounted) {
+                                searchController.clear();
+                                _updateFilteredNotes();
+                              }
+                            },
+                          ),
+                        );
+                      } catch (e) {
+                        debugPrint('Error building list item: $e');
+                        return const SizedBox.shrink();
+                      }
                     },
                   ),
           )
@@ -214,7 +259,7 @@ class _HomePageState extends State<HomePage> {
               builder: (context) => const AddNotePage(),
             ),
           );
-          if (result != null) {
+          if (result != null && mounted) {
             searchController.clear();
             _updateFilteredNotes();
           }
@@ -246,18 +291,33 @@ class _AddNotePageState extends State<AddNotePage> {
   @override
   void initState() {
     super.initState();
-    box = Hive.box('notes');
+    try {
+      box = Hive.box('notes');
+    } catch (e) {
+      debugPrint('Error initializing AddNotePage: $e');
+    }
   }
 
   void _saveNote() {
-    if (controller.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a note')),
-      );
-      return;
+    try {
+      if (controller.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a note')),
+        );
+        return;
+      }
+      box.add(controller.text);
+      if (mounted) {
+        Navigator.pop(context, controller.text);
+      }
+    } catch (e) {
+      debugPrint('Error saving note: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Error saving note')),
+        );
+      }
     }
-    box.add(controller.text);
-    Navigator.pop(context, controller.text);
   }
 
   void _showDiscardConfirmation() {
@@ -371,20 +431,37 @@ class _EditNotePageState extends State<EditNotePage> {
   @override
   void initState() {
     super.initState();
-    box = Hive.box('notes');
-    originalNote = widget.note;
-    controller = TextEditingController(text: widget.note);
+    try {
+      box = Hive.box('notes');
+      originalNote = widget.note;
+      controller = TextEditingController(text: widget.note);
+    } catch (e) {
+      debugPrint('Error initializing EditNotePage: $e');
+    }
   }
 
   void _saveNote() {
-    if (controller.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a note')),
-      );
-      return;
+    try {
+      if (controller.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a note')),
+        );
+        return;
+      }
+      if (widget.index >= 0 && widget.index < box.length) {
+        box.putAt(widget.index, controller.text);
+      }
+      if (mounted) {
+        Navigator.pop(context, controller.text);
+      }
+    } catch (e) {
+      debugPrint('Error saving note: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Error saving note')),
+        );
+      }
     }
-    box.putAt(widget.index, controller.text);
-    Navigator.pop(context, controller.text);
   }
 
   void _showDiscardConfirmation() {
