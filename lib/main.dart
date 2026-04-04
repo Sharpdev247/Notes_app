@@ -1,18 +1,38 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'dart:async';
+
+// Global box accessor with safety checks
+Box? _notesBox;
+
+Future<Box?> getNotesBox() async {
+  try {
+    if (_notesBox != null && _notesBox!.isOpen) {
+      return _notesBox;
+    }
+    _notesBox = await Hive.openBox('notes');
+    return _notesBox;
+  } catch (e) {
+    debugPrint('Error getting notes box: $e');
+    return null;
+  }
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Set up global error handler first
+  FlutterError.onError = (FlutterErrorDetails details) {
+    debugPrint('FLUTTER ERROR: ${details.exceptionAsString()}');
+    debugPrintStack(stackTrace: details.stack);
+  };
+
   try {
     await Hive.initFlutter();
-    await Hive.openBox('notes');
+    _notesBox = await Hive.openBox('notes');
   } catch (e) {
-    debugPrint('Error initializing Hive: $e');
+    debugPrint('Fatal error initializing Hive: $e');
   }
-
-  FlutterError.onError = (FlutterErrorDetails details) {
-    debugPrint('Flutter Error: ${details.exceptionAsString()}');
-  };
 
   runApp(const MyApp());
 }
@@ -53,16 +73,24 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  late final Box box;
+  Box? box;
   final searchController = TextEditingController();
   List<int> filteredIndices = [];
 
   @override
   void initState() {
     super.initState();
+    _initializeBox();
+  }
+
+  Future<void> _initializeBox() async {
     try {
-      box = Hive.box('notes');
-      _updateFilteredNotes();
+      if (mounted) {
+        box = await getNotesBox();
+        if (box != null && mounted) {
+          _updateFilteredNotes();
+        }
+      }
     } catch (e) {
       debugPrint('Error initializing HomePage: $e');
     }
@@ -70,13 +98,17 @@ class _HomePageState extends State<HomePage> {
 
   void _updateFilteredNotes() {
     try {
+      if (box == null || !box!.isOpen) {
+        debugPrint('Box not available');
+        return;
+      }
       final query = searchController.text.toLowerCase();
       if (query.isEmpty) {
-        filteredIndices = List.generate(box.length, (i) => i);
+        filteredIndices = List.generate(box!.length, (i) => i);
       } else {
         filteredIndices = [];
-        for (int i = 0; i < box.length; i++) {
-          final note = box.getAt(i);
+        for (int i = 0; i < box!.length; i++) {
+          final note = box!.getAt(i);
           if (note != null && note.toString().toLowerCase().contains(query)) {
             filteredIndices.add(i);
           }
@@ -105,8 +137,11 @@ class _HomePageState extends State<HomePage> {
             TextButton(
               onPressed: () {
                 try {
-                  if (index >= 0 && index < box.length) {
-                    box.deleteAt(index);
+                  if (box == null || !box!.isOpen) {
+                    throw Exception('Database not available');
+                  }
+                  if (index >= 0 && index < box!.length) {
+                    box!.deleteAt(index);
                   }
                   if (mounted) {
                     searchController.clear();
@@ -156,98 +191,102 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
           Expanded(
-            child: filteredIndices.isEmpty
-                ? Center(
-                    child: Text(
-                      searchController.text.isEmpty
-                          ? 'No notes yet. Create one!'
-                          : 'No notes found',
-                      style: Theme.of(context).textTheme.bodyLarge,
-                    ),
+            child: box == null || !box!.isOpen
+                ? const Center(
+                    child: Text('Loading notes...'),
                   )
-                : ListView.builder(
-                    itemCount: filteredIndices.length,
-                    itemBuilder: (context, listIndex) {
-                      try {
-                        final actualIndex = filteredIndices[listIndex];
-                        if (actualIndex < 0 || actualIndex >= box.length) {
-                          return const SizedBox.shrink();
-                        }
-                        final noteData = box.getAt(actualIndex);
-                        if (noteData == null) {
-                          return const SizedBox.shrink();
-                        }
-                        final note = noteData.toString();
-                        final preview = note.length > 100
-                            ? '${note.substring(0, 100)}...'
-                            : note;
+                : filteredIndices.isEmpty
+                    ? Center(
+                        child: Text(
+                          searchController.text.isEmpty
+                              ? 'No notes yet. Create one!'
+                              : 'No notes found',
+                          style: Theme.of(context).textTheme.bodyLarge,
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: filteredIndices.length,
+                        itemBuilder: (context, listIndex) {
+                          try {
+                            final actualIndex = filteredIndices[listIndex];
+                            if (actualIndex < 0 || actualIndex >= box!.length) {
+                              return const SizedBox.shrink();
+                            }
+                            final noteData = box!.getAt(actualIndex);
+                            if (noteData == null) {
+                              return const SizedBox.shrink();
+                            }
+                            final note = noteData.toString();
+                            final preview = note.length > 100
+                                ? '${note.substring(0, 100)}...'
+                                : note;
 
-                        return Card(
-                          margin: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          child: ListTile(
-                            title: Text(preview),
-                            trailing: SizedBox(
-                              width: 100,
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.edit),
-                                    onPressed: () async {
-                                      final result = await Navigator.push<String>(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (context) {
-                                            return EditNotePage(
-                                              note: note,
-                                              index: actualIndex,
-                                            );
-                                          },
-                                        ),
-                                      );
-                                      if (result != null && mounted) {
-                                        searchController.clear();
-                                        _updateFilteredNotes();
-                                      }
-                                    },
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.delete),
-                                    onPressed: () {
-                                      _deleteNoteWithConfirmation(actualIndex);
-                                    },
-                                  ),
-                                ],
+                            return Card(
+                              margin: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
                               ),
-                            ),
-                            onTap: () async {
-                              final result = await Navigator.push<String>(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) {
-                                    return EditNotePage(
-                                      note: note,
-                                      index: actualIndex,
-                                    );
-                                  },
+                              child: ListTile(
+                                title: Text(preview),
+                                trailing: SizedBox(
+                                  width: 100,
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.edit),
+                                        onPressed: () async {
+                                          final result = await Navigator.push<String>(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (context) {
+                                                return EditNotePage(
+                                                  note: note,
+                                                  index: actualIndex,
+                                                );
+                                              },
+                                            ),
+                                          );
+                                          if (result != null && mounted) {
+                                            searchController.clear();
+                                            _updateFilteredNotes();
+                                          }
+                                        },
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete),
+                                        onPressed: () {
+                                          _deleteNoteWithConfirmation(actualIndex);
+                                        },
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              );
-                              if (result != null && mounted) {
-                                searchController.clear();
-                                _updateFilteredNotes();
-                              }
-                            },
-                          ),
-                        );
-                      } catch (e) {
-                        debugPrint('Error building list item: $e');
-                        return const SizedBox.shrink();
-                      }
-                    },
-                  ),
+                                onTap: () async {
+                                  final result = await Navigator.push<String>(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) {
+                                        return EditNotePage(
+                                          note: note,
+                                          index: actualIndex,
+                                        );
+                                      },
+                                    ),
+                                  );
+                                  if (result != null && mounted) {
+                                    searchController.clear();
+                                    _updateFilteredNotes();
+                                  }
+                                },
+                              ),
+                            );
+                          } catch (e) {
+                            debugPrint('Error building list item: $e');
+                            return const SizedBox.shrink();
+                          }
+                        },
+                      ),
           )
         ],
       ),
@@ -285,14 +324,20 @@ class AddNotePage extends StatefulWidget {
 }
 
 class _AddNotePageState extends State<AddNotePage> {
-  late final Box box;
+  Box? box;
   final controller = TextEditingController();
 
   @override
   void initState() {
     super.initState();
+    _initializeBox();
+  }
+
+  Future<void> _initializeBox() async {
     try {
-      box = Hive.box('notes');
+      if (mounted) {
+        box = await getNotesBox();
+      }
     } catch (e) {
       debugPrint('Error initializing AddNotePage: $e');
     }
@@ -306,7 +351,10 @@ class _AddNotePageState extends State<AddNotePage> {
         );
         return;
       }
-      box.add(controller.text);
+      if (box == null || !box!.isOpen) {
+        throw Exception('Database not available');
+      }
+      box!.add(controller.text);
       if (mounted) {
         Navigator.pop(context, controller.text);
       }
@@ -424,17 +472,24 @@ class EditNotePage extends StatefulWidget {
 }
 
 class _EditNotePageState extends State<EditNotePage> {
-  late final Box box;
+  Box? box;
   late final TextEditingController controller;
   late String originalNote;
 
   @override
   void initState() {
     super.initState();
+    _initializeBox();
+  }
+
+  Future<void> _initializeBox() async {
     try {
-      box = Hive.box('notes');
-      originalNote = widget.note;
-      controller = TextEditingController(text: widget.note);
+      if (mounted) {
+        box = await getNotesBox();
+        originalNote = widget.note;
+        controller = TextEditingController(text: widget.note);
+        setState(() {});
+      }
     } catch (e) {
       debugPrint('Error initializing EditNotePage: $e');
     }
@@ -448,8 +503,11 @@ class _EditNotePageState extends State<EditNotePage> {
         );
         return;
       }
-      if (widget.index >= 0 && widget.index < box.length) {
-        box.putAt(widget.index, controller.text);
+      if (box == null || !box!.isOpen) {
+        throw Exception('Database not available');
+      }
+      if (widget.index >= 0 && widget.index < box!.length) {
+        box!.putAt(widget.index, controller.text);
       }
       if (mounted) {
         Navigator.pop(context, controller.text);

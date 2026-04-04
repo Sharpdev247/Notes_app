@@ -30,7 +30,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.basitkhan.notesapp"
+        applicationId = "com.sharpdev.notesapp"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
