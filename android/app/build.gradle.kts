@@ -16,7 +16,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.sharpdev.notesapp"
+    namespace = "com.basitkhan.notesapp"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -30,7 +30,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.sharpdev.notesapp"
+        applicationId = "com.basitkhan.notesapp"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
